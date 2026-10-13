@@ -47,7 +47,7 @@ jobs:
             import {readFileSync,appendFileSync} from 'node:fs';
             const published=!JSON.parse(readFileSync('existing-release.json')).isDraft;
             appendFileSync(process.env.GITHUB_OUTPUT,`published=${published}\n`);
-            JS
+          JS
           else
             printf 'published=false\n' >> "$GITHUB_OUTPUT"
           fi
@@ -97,7 +97,7 @@ jobs:
             const ref=JSON.parse(readFileSync('existing-tag.json')).object;
             const commit=ref.type==='tag'?JSON.parse(execFileSync('gh',['api',`repos/${process.env.GITHUB_REPOSITORY}/git/tags/${ref.sha}`])).object.sha:ref.sha;
             if(commit!==process.env.GITHUB_SHA)throw Error('Version tag already points to another commit');
-            JS
+          JS
           else
             TAG_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" --method POST -f tag="$RELEASE_TAG" -f message="Glassboard $RELEASE_TAG" -f object="$GITHUB_SHA" -f type=commit --jq .sha)
             gh api "repos/$GITHUB_REPOSITORY/git/refs" --method POST -f ref="refs/tags/$RELEASE_TAG" -f sha="$TAG_SHA"
