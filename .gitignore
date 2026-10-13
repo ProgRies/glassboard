@@ -4,3 +4,7 @@ release-assets/
 *.docker.tar.gz
 existing-release.json
 existing-tag.json
+
+.env
+.env.*
+!.env.example

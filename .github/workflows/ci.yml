@@ -27,5 +27,9 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+      - name: Validate Traefik Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
       - run: docker build --tag glassboard:ci .
       - run: node scripts/smoke-container.mjs glassboard:ci

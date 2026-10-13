@@ -1,0 +1,45 @@
+# Glassboard hinter eurem vorhandenen Traefik; siehe docs/deployment-traefik.md.
+#
+#   cp .env.example .env  # GLASSBOARD_HOST anpassen
+#   docker compose pull && docker compose up -d
+#
+# Einstellungen stehen in .env (GLASSBOARD_HOST, GLASSBOARD_VERSION).
+# Boards und Bilder liegen im persistenten Volume "storage" unter /app/data.
+# Ein Service: Glassboard benötigt keine Laravel-Queue, Scheduler oder Reverb.
+
+services:
+  glassboard:
+    image: ghcr.io/progries/glassboard:${GLASSBOARD_VERSION:-1.0.0}
+    container_name: glassboard
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /app/data
+    volumes:
+      - storage:/app/data
+    labels:
+      traefik.enable: "true"
+      # Traefik soll das bestehende Netz des Proxys verwenden.
+      traefik.docker.network: reverse-proxy
+      traefik.http.routers.glassboard.entrypoints: web-secure
+      traefik.http.routers.glassboard.rule: "Host(`${GLASSBOARD_HOST:?GLASSBOARD_HOST in .env setzen}`)"
+      traefik.http.routers.glassboard.service: glassboard
+      traefik.http.routers.glassboard.tls: "true"
+      traefik.http.routers.glassboard.tls.certresolver: letsencrypt
+      traefik.http.routers.glassboard.middlewares: default@file
+      traefik.http.services.glassboard.loadbalancer.server.port: "3000"
+    # Keine "ports": erreichbar ist Glassboard nur über Traefik.
+    networks:
+      - default
+      - reverse-proxy
+
+networks:
+  reverse-proxy:
+    external: true
+
+volumes:
+  storage:

@@ -7,3 +7,6 @@ test
 scripts
 releases
 release-assets
+
+.env
+.env.*

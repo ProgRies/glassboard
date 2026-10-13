@@ -18,6 +18,16 @@ Open **http://localhost:3000** on the server, or **http://YOUR-SERVER-IP:3000** 
 
 GitHub Container Registry packages can initially be private. The repository owner should set this package to **Public** in its package settings to allow pulling without a registry login. Application users never need accounts.
 
+## Behind an existing Traefik
+
+Use [`compose.traefik.yaml`](compose.traefik.yaml) and copy [`.env.example`](.env.example) to `.env`. Set `GLASSBOARD_HOST`, then run:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+The `.env` selects the Traefik Compose file, which publishes no host port and uses your existing `reverse-proxy` network. See [the deployment guide](docs/deployment-traefik.md) for your `web-secure`, `letsencrypt` and `default@file` configuration. Glassboard uses **one service**; no Laravel queue, scheduler or Reverb is needed.
+
 ## Build with Docker yourself
 
 From this folder:
