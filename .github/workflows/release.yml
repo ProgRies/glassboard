@@ -1,0 +1,129 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+    paths: ['package.json', '.github/workflows/release.yml', 'releases/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-glassboard
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TRIGGER_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          const version=JSON.parse(readFileSync('package.json')).version;
+          const tag=process.env.TRIGGER_TAG||'v'+version;
+          if(!/^v\d+\.\d+\.\d+$/.test(tag))throw Error('Use a stable vMAJOR.MINOR.PATCH tag');
+          if(tag!=='v'+version)throw Error('Tag must match package.json version');
+          readFileSync(`releases/${tag}.md`);
+          appendFileSync(process.env.GITHUB_ENV,`RELEASE_TAG=${tag}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,`version=${version}\nimage=ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}\n`);
+          JS
+      - name: Check for an existing published release
+        id: existing
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft > existing-release.json 2>/dev/null; then
+            node --input-type=module <<'JS'
+            import {readFileSync,appendFileSync} from 'node:fs';
+            const published=!JSON.parse(readFileSync('existing-release.json')).isDraft;
+            appendFileSync(process.env.GITHUB_OUTPUT,`published=${published}\n`);
+            JS
+          else
+            printf 'published=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test application
+        if: steps.existing.outputs.published != 'true'
+        run: node --test test/*.test.mjs
+      - name: Build and smoke-test release image
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker build --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" --tag "glassboard:$VERSION" .
+          node scripts/smoke-container.mjs "glassboard:$VERSION"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        if: steps.existing.outputs.published != 'true'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.existing.outputs.published != 'true'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.existing.outputs.published != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish amd64 and arm64 image
+        if: steps.existing.outputs.published != 'true'
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            REVISION=${{ github.sha }}
+          tags: |
+            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+            ${{ steps.version.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Create or verify the version tag
+        if: steps.existing.outputs.published != 'true'
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > existing-tag.json 2>/dev/null; then
+            node --input-type=module <<'JS'
+            import {readFileSync} from 'node:fs';
+            import {execFileSync} from 'node:child_process';
+            const ref=JSON.parse(readFileSync('existing-tag.json')).object;
+            const commit=ref.type==='tag'?JSON.parse(execFileSync('gh',['api',`repos/${process.env.GITHUB_REPOSITORY}/git/tags/${ref.sha}`])).object.sha:ref.sha;
+            if(commit!==process.env.GITHUB_SHA)throw Error('Version tag already points to another commit');
+            JS
+          else
+            TAG_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" --method POST -f tag="$RELEASE_TAG" -f message="Glassboard $RELEASE_TAG" -f object="$GITHUB_SHA" -f type=commit --jq .sha)
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" --method POST -f ref="refs/tags/$RELEASE_TAG" -f sha="$TAG_SHA"
+          fi
+      - name: Prepare downloadable release assets
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ steps.version.outputs.image }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          mkdir -p release-assets
+          docker save "glassboard:$VERSION" | gzip > "release-assets/glassboard-$VERSION-linux-amd64.docker.tar.gz"
+          git archive --format=zip --prefix="glassboard-$VERSION/" HEAD -o "release-assets/glassboard-$VERSION-source.zip"
+          printf '%s@%s\n' "$IMAGE" "$DIGEST" > release-assets/container-digest.txt
+          cd release-assets
+          sha256sum *.gz *.zip container-digest.txt > SHA256SUMS.txt
+      - name: Publish GitHub release after successful image publication
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft > existing-release.json 2>/dev/null; then
+            node -e "if(!JSON.parse(require('fs').readFileSync('existing-release.json')).isDraft)throw Error('Release is already published; do not replace published assets')"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Glassboard $VERSION" --notes-file "releases/$RELEASE_TAG.md"
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

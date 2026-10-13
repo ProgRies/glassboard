@@ -1,0 +1,9 @@
+data
+node_modules
+.git
+test
+*.zip
+.github
+scripts
+releases
+release-assets

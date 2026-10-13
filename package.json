@@ -1,0 +1,23 @@
+{
+  "name": "glassboard-selfhost",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A shared whiteboard for your team. No accounts, no external services, no runtime dependencies.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ProgRies/glassboard.git"
+  },
+  "homepage": "https://github.com/ProgRies/glassboard",
+  "bugs": {
+    "url": "https://github.com/ProgRies/glassboard/issues"
+  },
+  "license": "UNLICENSED"
+}

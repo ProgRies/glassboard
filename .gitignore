@@ -1,0 +1,6 @@
+data/
+node_modules/
+release-assets/
+*.docker.tar.gz
+existing-release.json
+existing-tag.json

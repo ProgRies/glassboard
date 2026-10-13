@@ -1,0 +1,11 @@
+services:
+  glassboard:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - glassboard-data:/app/data
+    restart: unless-stopped
+    init: true
+volumes:
+  glassboard-data:
