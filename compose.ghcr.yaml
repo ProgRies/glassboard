@@ -1,6 +1,6 @@
 services:
   glassboard:
-    image: ghcr.io/progries/glassboard:1.0.0
+    image: ghcr.io/progries/glassboard:1.1.0
     ports:
       - "3000:3000"
     volumes:

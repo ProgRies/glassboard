@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
       - run: node --test test/*.test.mjs
   container:
     runs-on: ubuntu-latest
@@ -27,6 +28,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+      - run: npm ci --ignore-scripts
       - name: Validate Traefik Compose configuration
         run: |
           cp .env.example .env

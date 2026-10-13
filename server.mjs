@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {attachRealtime} from './realtime.mjs';
 import { mkdir, readFile, writeFile, rename, readdir, unlink, open } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,13 +70,14 @@ export async function createApp({ dataDir = resolve(process.env.DATA_DIR || join
           const b = await serial(id, async () => {
             if (index.has(id)) fail(409, 'Board already exists');
             return saveBoard({ ...input.board, revision: 1, updated: Date.now() });
-          }); json(201, b); return;
+          }); live.commit(null,b,req.headers['x-glassboard-peer']);json(201, b); return;
         }
         if (req.method === 'PATCH') {
-          const input = await parse(req); validateSnapshot(input.base); validateBoard(input.board);
-          if (input.board.id !== id || !Number.isInteger(input.baseRevision) || input.baseRevision < 1) fail(400, 'Invalid revision');
+          const input = await parse(req); if(!input.patch){validateSnapshot(input.base);validateBoard(input.board);if(input.board.id!==id)fail(400,'Invalid board ID')}
+          if (!Number.isInteger(input.baseRevision) || input.baseRevision < 1) fail(400, 'Invalid revision');
           const result = await serial(id, async () => {
             const remote = await readBoard(id);
+            if(input.patch){const derived=expandPatch(remote,input.patch);input.base=derived.base;input.board={...remote,...derived.local,thumb:input.thumb||''};validateBoard(input.board)}
             if (input.baseRevision > remote.revision) fail(409, 'Revision is newer than server');
             const merged = mergeSnapshots(input.base, input.board, remote);
             if (merged.conflicts.length) return { conflict: true, conflicts: merged.conflicts, board: remote };
@@ -84,14 +86,14 @@ export async function createApp({ dataDir = resolve(process.env.DATA_DIR || join
             // A thumbnail made from a stale snapshot cannot represent merged work.
             b.thumb = input.baseRevision === remote.revision ? input.board.thumb || '' : '';
             b.revision = remote.revision + 1; b.updated = Date.now();
-            validateBoard(b); return { board: await saveBoard(b) };
+            validateBoard(b); await saveBoard(b);live.commit(remote,b,req.headers['x-glassboard-peer']);return { board:b };
           }); json(result.conflict ? 409 : 200, result); return;
         }
         if (req.method === 'DELETE') {
           const revision = Number(req.headers['if-match']);
           await serial(id, async () => {
             const b = await readBoard(id); if (revision !== b.revision) fail(409, 'Board changed. Reload the list before deleting.');
-            await unlink(join(boardDir, id + '.json')); index.delete(id);
+            await unlink(join(boardDir, id + '.json')); index.delete(id);live.deleted(id);
           }); res.writeHead(204, common); res.end(); return;
         }
       }
@@ -115,8 +117,16 @@ export async function createApp({ dataDir = resolve(process.env.DATA_DIR || join
       json(e.status || 500, { error: e.status ? e.message : 'Unable to save. Check server storage and try again.' });
     }
   });
+  const live=attachRealtime(server,{revision:id=>index.get(id)?.revision,validateItem:item=>validateSnapshot({title:'',items:[item]})});
   server.requestTimeout = 30000;
   return server;
+}
+function expandPatch(remote,patch) {
+  if(!patch||!Array.isArray(patch.put)||!Array.isArray(patch.remove)||patch.put.length+patch.remove.length>20000)fail(400,'Invalid object changes');
+  const before=new Map(remote.items.map(o=>[o.id,o])),after=new Map(before),ids=new Set();
+  for(const entry of patch.put){const id=entry?.item?.id;if(!UUID.test(id||'')||ids.has(id)||entry.before!==null&&entry.before?.id!==id)fail(400,'Invalid object change');ids.add(id);validateSnapshot({title:'',items:[entry.item]});if(entry.before){validateSnapshot({title:'',items:[entry.before]});before.set(id,entry.before)}else before.delete(id);after.set(id,entry.item)}
+  for(const entry of patch.remove){if(!UUID.test(entry?.id||'')||ids.has(entry.id)||entry.before?.id!==entry.id)fail(400,'Invalid object deletion');ids.add(entry.id);validateSnapshot({title:'',items:[entry.before]});before.set(entry.id,entry.before);after.delete(entry.id)}
+  const base={title:patch.title?.before??remote.title,items:[...before.values()]},local={title:patch.title?.value??remote.title,items:[...after.values()]};validateSnapshot(base);validateSnapshot(local);return{base,local};
 }
 function validateSnapshot(b) {
   if (!b || typeof b.title !== 'string' || b.title.length > 120 || !Array.isArray(b.items) || b.items.length > 20000) fail(400, 'Invalid board');

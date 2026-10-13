@@ -51,6 +51,9 @@ jobs:
           else
             printf 'published=false\n' >> "$GITHUB_OUTPUT"
           fi
+      - name: Install locked dependencies
+        if: steps.existing.outputs.published != 'true'
+        run: npm ci --ignore-scripts
       - name: Test application
         if: steps.existing.outputs.published != 'true'
         run: node --test test/*.test.mjs

@@ -2,14 +2,14 @@
 
 Diese Variante übernimmt das Schema eurer Sprint-Installation: bestehendes Docker-Netz `reverse-proxy`, EntryPoint `web-secure`, Zertifikatsresolver `letsencrypt` und Middleware `default@file`. Traefik übernimmt HTTPS; Glassboard selbst liefert HTTP auf Port **3000**. Es wird kein Host-Port veröffentlicht.
 
-**Glassboard braucht nur einen Service.** Die Vorlage enthält Queue, Scheduler und Reverb für eine Laravel-Anwendung. Glassboard nutzt einen Node.js-Prozess, Dateien für Boards/Bilder und regelmäßige HTTP-Abfragen für Updates. Zusätzliche Worker, Datenbankcontainer, Reverb, Caddy, `APP_KEY` und Mail-Konfiguration sind daher nicht erforderlich.
+**Glassboard braucht nur einen Service.** Die Vorlage enthält Queue, Scheduler und Reverb für eine Laravel-Anwendung. Glassboard nutzt einen Node.js-Prozess, Dateien für Boards/Bilder und WebSockets für Live-Updates. Zusätzliche Worker, Datenbankcontainer, Reverb, Caddy, `APP_KEY` und Mail-Konfiguration sind daher nicht erforderlich.
 
 ## Voraussetzungen
 
 - Docker Compose ist installiert.
 - Euer Traefik läuft bereits mit Docker-Provider und ist im externen Docker-Netz `reverse-proxy`.
 - EntryPoint `web-secure`, Resolver `letsencrypt` und Middleware `default@file` sind in eurem Traefik vorhanden. Falls sie anders heißen, die entsprechenden Labels in der Compose-Datei anpassen. Falls keine `default@file`-Middleware existiert, das Middleware-Label entfernen.
-- Der gewünschte Hostname zeigt per DNS auf euren Traefik. Bei einem bestehenden Access-Schutz muss er auch die Pfade `/api/` und `/merge.mjs` durchlassen und den ursprünglichen Host-Header beibehalten.
+- Der gewünschte Hostname zeigt per DNS auf euren Traefik. Bei einem bestehenden Access-Schutz muss er auch die Pfade `/api/` und `/merge.mjs` sowie WebSocket-Upgrades auf `/api/live` durchlassen und den ursprünglichen Host-Header beibehalten.
 
 ## Start
 
@@ -24,7 +24,7 @@ In `.env` den Hostnamen und bei Bedarf die Version setzen:
 ```dotenv
 COMPOSE_FILE=compose.traefik.yaml
 GLASSBOARD_HOST=whiteboard.eure-domain.de
-GLASSBOARD_VERSION=1.0.0
+GLASSBOARD_VERSION=1.1.0
 ```
 
 Starten:
@@ -40,7 +40,20 @@ Danach `https://whiteboard.eure-domain.de` öffnen. Das Image liegt öffentlich 
 
 ## Gemeinsames Bearbeiten
 
-Mehrere Personen können dasselbe Whiteboard gleichzeitig bearbeiten. Änderungen an unterschiedlichen Elementen werden automatisch zusammengeführt; andere geöffnete Browser sehen gespeicherte Änderungen nach ungefähr zwei Sekunden. Zoom und Pan bleiben je Browser unabhängig. Werden gleichzeitig Änderungen am selben Element vorgenommen, bleibt die zweite Bearbeitung als separate Wiederherstellungskopie erhalten. Die Änderungen werden nicht still überschrieben. Aktive Zeichenbewegungen und Texteingaben werden nach Abschluss übertragen. Dafür ist kein WebSocket-/Reverb-Service erforderlich.
+Mehrere Personen können dasselbe Whiteboard gleichzeitig bearbeiten. Zeichenstriche, bewegte Elemente, Textvorschauen und die Cursor anderer Personen werden während der Eingabe per WebSocket übertragen. Änderungen an unterschiedlichen Elementen werden automatisch zusammengeführt. Zoom und Pan bleiben je Browser unabhängig. Konflikte am selben Element bleiben als separate Wiederherstellungskopie erhalten.
+
+Der WebSocket läuft über dieselbe Adresse und denselben Container-Port **3000** auf `/api/live`. Traefik unterstützt das Upgrade automatisch; es sind keine zusätzlichen Router, Ports oder Reverb-Container erforderlich. Euer `default@file`-Middleware-/Access-Schutz muss WebSocket-Upgrades erlauben und den ursprünglichen Host-Header beibehalten. Bei HTTPS wird automatisch `wss://` verwendet. Das Statusfeld zeigt „Live“ und bei mehreren Personen deren Anzahl; „Reconnecting…“ bedeutet, dass der WebSocket gerade nicht verbunden ist. Dann übernimmt vorübergehend HTTP-Polling.
+
+## Update auf Live-Collaboration
+
+In der **vorhandenen** `.env` nur `GLASSBOARD_VERSION=1.1.0` setzen (Hostname und Volume behalten), dann:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+Danach alle geöffneten Glassboard-Browser-Tabs neu laden. Bestehende Boards und Bilder bleiben ohne Datenmigration erhalten.
+
 
 ## Betrieb
 

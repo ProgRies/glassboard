@@ -1,6 +1,6 @@
 # Glassboard · self-hosted
 
-A quiet whiteboard for a shared company workspace. Same glass UI, infinite canvas, touch and mouse controls, image paste/drop, notes, shapes, undo/redo and PNG export. No accounts. No OpenAI, Cloudflare, external APIs, database server, analytics, fonts, or runtime packages required.
+A quiet whiteboard for a shared company workspace. Same glass UI, infinite canvas, touch and mouse controls, image paste/drop, notes, shapes, undo/redo and PNG export. No accounts. No OpenAI, Cloudflare, external APIs, database server, analytics or external fonts. One locked runtime dependency (`ws`) handles WebSockets.
 
 ## Run the published Docker image
 
@@ -9,7 +9,7 @@ After the first release is published, pull the prebuilt image:
 ```sh
 docker run -d --name glassboard --restart unless-stopped --init \
   -p 3000:3000 -v glassboard-data:/app/data \
-  ghcr.io/progries/glassboard:1.0.0
+  ghcr.io/progries/glassboard:1.1.0
 ```
 
 Or use `docker compose -f compose.ghcr.yaml up -d` from a source checkout. The registry image includes **linux/amd64** and **linux/arm64** (including Apple Silicon servers).
@@ -44,9 +44,9 @@ Each release includes a source ZIP, checksums, and a **linux/amd64 Docker image 
 
 ```sh
 sha256sum -c SHA256SUMS.txt
-gunzip -c glassboard-1.0.0-linux-amd64.docker.tar.gz | docker load
+gunzip -c glassboard-1.1.0-linux-amd64.docker.tar.gz | docker load
 docker run -d --name glassboard --restart unless-stopped --init \
-  -p 3000:3000 -v glassboard-data:/app/data glassboard:1.0.0
+  -p 3000:3000 -v glassboard-data:/app/data glassboard:1.1.0
 ```
 
 ## Start without Docker
@@ -54,10 +54,11 @@ docker run -d --name glassboard --restart unless-stopped --init \
 Install Node.js 22 or newer (Node 24 recommended), then:
 
 ```sh
+npm ci --omit=dev --ignore-scripts
 node server.mjs
 ```
 
-No `npm install` or build step. Open **http://localhost:3000**. By default it listens on all interfaces on port 3000 and writes to `data/` next to `server.mjs`.
+Install the locked dependency once; there is no frontend build step. Open **http://localhost:3000**. By default it listens on all interfaces on port 3000 and writes to `data/` next to `server.mjs`.
 
 Optional environment variables:
 
@@ -76,12 +77,18 @@ DATA_DIR=/srv/glassboard-data PORT=8080 node server.mjs
 ## Working together
 
 - Everyone can create, view, edit and delete boards. No sign-in or application-level roles.
-- Different boards work independently. Edits to different objects on the same board merge automatically; saved changes appear on other screens within about two seconds.
+- Different boards work independently. Edits to different objects on the same board merge automatically. Strokes, dragging, text previews and collaborator cursors stream through WebSockets while you work; completed changes push immediately.
 - Your zoom and pan stay local to your browser. Other people do not move your camera.
 - If two people change the **same object** or rename the same board differently, the second conflicting edit is saved as a separate **“(recovered)” board**. A dialog tells that person what happened. The original retains the first saved edit.
 - A changed board cannot be deleted from an outdated board list. The list refreshes and asks you to try again.
 - Undo applies to your local editing history. Remote additions are retained. Undo entries that conflict with a colleague’s edit are discarded so undo cannot erase that edit.
-- This is shared editing with periodic updates, not a live multiplayer cursor or presence system. Long strokes and active text edits synchronize once the gesture/edit finishes.
+- Live previews are batched at up to 30 updates per second, with incremental stroke segments rather than repeated full strokes. The small “Live” indicator shows the number of connected screens. Durable saves happen shortly after a gesture or text edit finishes; conflicting saved edits are still protected. Latency depends on your network.
+
+## Realtime transport
+
+`/api/live` shares the existing HTTP server and port 3000. No additional container, port, Reverb, Redis or WebSocket service is needed. While the WebSocket is connected there is no periodic board polling. Committed updates use object deltas; drawing packets carry only new points. Heartbeats detect dead connections, reconnect uses exponential backoff, and revision checks resynchronize after a disconnect. Slow connections have bounded send queues. If WebSockets are unavailable, a two-second HTTP polling fallback keeps saved boards usable; the indicator shows “Reconnecting…”.
+
+Live previews are temporary. A disconnected unfinished gesture can disappear from other screens until its owner finishes and saves it. Existing boards and images need no migration. After updating the server, **reload all open browser tabs** to activate the new client.
 
 ## Saving and recovery
 
@@ -95,7 +102,7 @@ Run **one server process/container per data directory**. Do not run multiple rep
 
 Anyone who can reach the server can access and change everything. Put it on your company LAN/VPN, or behind your existing reverse proxy/access control if exposing it outside that network. The app itself has no accounts. HTTPS through your existing proxy is supported; ordinary LAN HTTP also works for drawing, pasting images and UUID creation. Fullscreen availability depends on the browser.
 
-A reverse proxy should pass the original `Host` header, allow up to 18 MB request bodies, and forward `/` and `/api/` to the same instance. Serve from a dedicated hostname or at the root of an IP/port, not a URL subdirectory. `/api/health` is a small health endpoint.
+A reverse proxy should pass the original `Host` header, allow up to 18 MB request bodies, and forward `/` and `/api/` to the same instance. WebSocket upgrades on `/api/live` must be allowed; HTTPS clients use `wss://` on the same hostname and port. Serve from a dedicated hostname or at the root of an IP/port, not a URL subdirectory. `/api/health` is a small health endpoint.
 
 ## Backup and restore
 
@@ -108,10 +115,11 @@ The package contains application source and starts with an empty shared library.
 ## Verification
 
 ```sh
+npm ci --ignore-scripts
 node --test test/*.test.mjs
 ```
 
-Tests exercise real HTTP requests, parallel edits, conflict preservation, guarded deletion, image persistence, restart recovery, client synchronization and undo merging. No test dependencies. The CI and release workflows build the Docker image and test its HTTP startup, non-root runtime, and board/image persistence across a restart. Actual touchscreen/browser rendering is not covered by these automated checks.
+Tests exercise actual WebSocket connections, live browser-controller emulation, HTTP requests, parallel edits, conflict preservation, guarded deletion, image persistence, restart recovery, client synchronization and undo merging. Tests use the same locked WebSocket library as the server. The CI and release workflows build the Docker image and test its HTTP startup, non-root runtime, and board/image persistence across a restart. Actual touchscreen/browser rendering is not covered by these automated checks.
 
 ## Publishing a release (maintainers)
 
@@ -121,12 +129,12 @@ Tests exercise real HTTP requests, parallel edits, conflict preservation, guarde
 4. Alternatively, create and push an annotated tag matching `package.json`:
 
 ```sh
-git tag -a v1.0.0 -m "Glassboard 1.0.0"
-git push origin v1.0.0
+git tag -a v1.1.0 -m "Glassboard 1.1.0"
+git push origin v1.1.0
 ```
 
 The release workflow verifies the version, runs tests, smoke-tests an amd64 image, builds/pushes the multi-platform image, creates or verifies the annotated version tag, creates checksummed download assets and publishes the GitHub Release. It uses the repository's built-in `GITHUB_TOKEN`; no registry password or extra secret is required. Repository policy must allow GitHub Actions to write repository contents and packages.
 
-If publication fails after creating a draft release, rerun the failed workflow. Already published releases are protected against asset replacement. Image tags `1.0.0` and `latest` are created for this release; deployments should pin a version or the digest in `container-digest.txt`.
+If publication fails after creating a draft release, rerun the failed workflow. Already published releases are protected against asset replacement. Image tags `1.1.0` and `latest` are created for this release; deployments should pin a version or the digest in `container-digest.txt`.
 
 No open-source license has been selected. `UNLICENSED` records this rather than assigning a license on the owner's behalf.

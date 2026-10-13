@@ -27,3 +27,13 @@ export function mergeSnapshots(base, local, remote) {
   result.items = [...merged.values()];
   return { board: result, conflicts };
 }
+
+// Only changed objects are uploaded; unchanged strokes/images stay on the server.
+export function makePatch(base, local) {
+  const before=new Map(base.items.map(o=>[o.id,o])),after=new Map(local.items.map(o=>[o.id,o]));
+  return {
+    ...(base.title!==local.title?{title:{before:base.title,value:local.title}}:{}),
+    put:local.items.filter(o=>!equal(o,before.get(o.id))).map(item=>({item,before:before.get(item.id)||null})),
+    remove:base.items.filter(o=>!after.has(o.id)).map(before=>({id:before.id,before}))
+  };
+}

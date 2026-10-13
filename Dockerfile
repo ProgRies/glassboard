@@ -8,7 +8,9 @@ LABEL org.opencontainers.image.title="Glassboard" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
 WORKDIR /app
-COPY --chown=node:node package.json server.mjs ./
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY --chown=node:node server.mjs realtime.mjs ./
 COPY --chown=node:node public ./public
 RUN mkdir /app/data && chown node:node /app/data
 USER node
